@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Space Shooter</title>
+
+<style>
+* {
+    box-sizing: border-box;
+    touch-action: none;
+}
+
+body {
+    margin: 0;
+    overflow: hidden;
+    background: #050514;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block;
+    width: 100vw;
+    height: 100dvh;
+}
+
+#controls {
+    position: fixed;
+    bottom: 12px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    gap: 10px;
+    height: 85px;
+}
+
+button {
+    border: 3px solid white;
+    border-radius: 18px;
+    color: white;
+    font-size: clamp(15px, 4vw, 24px);
+    font-weight: bold;
+    background: #326bff;
+    flex: 1;
+}
+
+#shoot {
+    background: #e52235;
+    flex: 1.3;
+}
+
+#message {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.85);
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    gap: 20px;
+}
+
+#message h1 {
+    font-size: 42px;
+    margin: 0;
+}
+
+#restart {
+    padding: 16px;
+    max-width: 240px;
+    flex: none;
+    width: 80%;
+    background: #159447;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="controls">
+    <button id="left">◀ LEFT</button>
+    <button id="right">RIGHT ▶</button>
+    <button id="shoot">SHOOT 🔥</button>
+</div>
+
+<div id="message">
+    <h1 id="result">GAME OVER</h1>
+    <div id="finalScore"></div>
+    <button id="restart">PLAY AGAIN</button>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let W, H;
+
+function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    player.y = H - 150;
+    player.x = Math.min(W - player.w, Math.max(0, player.x));
+}
+
+const player = {
+    x: 0, y: 0, w: 48, h: 55,
+    speed: 380, lives: 10
+};
+
+let bullets = [];
+let enemyBullets = [];
+let enemies = [];
+let stars = [];
+
+let score = 0;
+let spawned = 0;
+let destroyed = 0;
+let spawnTimer = 0;
+let shootTimer = 0;
+
+let boss = null;
+let gameOver = false;
+let victory = false;
+let lastTime = 0;
+
+let keys = {
+    left: false,
+    right: false,
+    shoot: false
+};
+
+function makeStars() {
+    stars = [];
+    for (let i = 0; i < 90; i++) {
+        stars.push({
+            x: Math.random() * W,
+            y: Math.random() * H,
+            speed: 25 + Math.random() * 90,
+            size: 1 + Math.random() * 2
+        });
+    }
+}
+
+function resetGame() {
+    player.x = W / 2 - player.w / 2;
+    player.y = H - 150;
+    player.lives = 10;
+
+    bullets = [];
+    enemyBullets = [];
+    enemies = [];
+
+    score = 0;
+    spawned = 0;
+    destroyed = 0;
+    spawnTimer = 0;
+    shootTimer = 0;
+
+    boss = null;
+    gameOver = false;
+    victory = false;
+
+    document.getElementById("message").style.display = "none";
+}
+
+function spawnEnemy() {
+    let size = 60 + Math.random() * 20;
+
+    enemies.push({
+        x: Math.random() * Math.max(1, W - size),
+        y: -size,
+        w: size,
+        h: size,
+        speed: 70 + Math.random() * 45,
+        shootTimer: 2.5 + Math.random() * 1.5
+    });
+}
+
+function createEnemyBullet(x, y, radius = 8) {
+    enemyBullets.push({
+        x, y,
+        speed: 650,
+        radius
+    });
+}
+
+function finish(win) {
+    if (gameOver || victory) return;
+
+    gameOver = !win;
+    victory = win;
+
+    document.getElementById("result").textContent =
+        win ? "YOU WIN!" : "GAME OVER";
+
+    document.getElementById("finalScore").textContent =
+        "Final score: " + score;
+
+    document.getElementById("message").style.display = "flex";
+}
+
+function rectHit(a, b) {
+    return a.x < b.x + b.w &&
+           a.x + a.w > b.x &&
+           a.y < b.y + b.h &&
+           a.y + a.h > b.y;
+}
+
+function update(dt) {
+    if (gameOver || victory) return;
+
+    // Player movement
+    if (keys.left) player.x -= player.speed * dt;
+    if (keys.right) player.x += player.speed * dt;
+
+    player.x = Math.max(0, Math.min(W - player.w, player.x));
+
+    // Player bullets: half speed and twice the size
+    shootTimer -= dt;
+
+    if (keys.shoot && shootTimer <= 0) {
+        bullets.push({
+            x: player.x + player.w / 2 - 8,
+            y: player.y - 20,
+            w: 16,
+            h: 40,
+            speed: 325
+        });
+
+        shootTimer = 0.18;
+    }
+
+    for (let b of bullets) {
+        b.y -= b.speed * dt;
+    }
+
+    bullets = bullets.filter(b => b.y + b.h > 0);
+
+    // Spawn 20 enemies one by one
+    if (!boss && spawned < 20) {
+        spawnTimer -= dt;
+
+        if (spawnTimer <= 0) {
+            spawnEnemy();
+            spawned++;
+            spawnTimer = 2;
+        }
+    }
+
+    // Move enemies and fire at player
+    for (let e of [...enemies]) {
+        e.y += e.speed * dt;
+        e.shootTimer -= dt;
+
+        if (e.shootTimer <= 0) {
+            createEnemyBullet(e.x + e.w / 2, e.y + e.h);
+            e.shootTimer = 3 + Math.random();
+        }
+
+        let hit = false;
+
+        for (let b of [...bullets]) {
+            if (rectHit(b, e)) {
+                bullets.splice(bullets.indexOf(b), 1);
+                hit = true;
+                break;
+            }
+        }
+
+        if (hit) {
+            enemies.splice(enemies.indexOf(e), 1);
+            score += 10;
+            destroyed++;
+            continue;
+        }
+
+        if (e.y > H) {
+            enemies.splice(enemies.indexOf(e), 1);
+            player.lives--;
+
+            if (player.lives <= 0) finish(false);
+        }
+    }
+
+    // Boss appears after all 20 enemies are dealt with
+    if (!boss && spawned === 20 && enemies.length === 0 && !gameOver) {
+        boss = {
+            x: W / 2 - 90,
+            y: 70,
+            w: 180,
+            h: 100,
+            hp: 200,
+            direction: 1,
+            shootTimer: 2
+        };
+
+        enemyBullets = [];
+    }
+
+    // Boss movement and three straight-down bullets
+    if (boss) {
+        boss.x += boss.direction * 150 * dt;
+
+        if (boss.x + boss.w >= W) {
+            boss.x = W - boss.w;
+            boss.direction = -1;
+        }
+
+        if (boss.x <= 0) {
+            boss.x = 0;
+            boss.direction = 1;
+        }
+
+        boss.shootTimer -= dt;
+
+        if (boss.shootTimer <= 0) {
+            for (let offset of [35, 90, 145]) {
+                createEnemyBullet(boss.x + offset, boss.y + boss.h, 10);
+            }
+
+            boss.shootTimer = 2;
+        }
+
+        for (let b of [...bullets]) {
+            if (rectHit(b, boss)) {
+                bullets.splice(bullets.indexOf(b), 1);
+                boss.hp -= 5;
+            }
+        }
+
+        if (boss.hp <= 0) {
+            boss.hp = 0;
+            score += 500;
+            finish(true);
+        }
+    }
+
+    // Enemy and boss bullets
+    for (let b of [...enemyBullets]) {
+        b.y += b.speed * dt;
+
+        let bulletRect = {
+            x: b.x - b.radius,
+            y: b.y - b.radius,
+            w: b.radius * 2,
+            h: b.radius * 2
+        };
+
+        if (rectHit(bulletRect, player)) {
+            enemyBullets.splice(enemyBullets.indexOf(b), 1);
+            player.lives--;
+
+            if (player.lives <= 0) finish(false);
+        } else if (b.y > H + 20) {
+            enemyBullets.splice(enemyBullets.indexOf(b), 1);
+        }
+    }
+
+    // Stars
+    for (let s of stars) {
+        s.y += s.speed * dt;
+
+        if (s.y > H) {
+            s.y = 0;
+            s.x = Math.random() * W;
+        }
+    }
+}
+
+function draw() {
+    ctx.fillStyle = "#050514";
+    ctx.fillRect(0, 0, W, H);
+
+    // Stars
+    ctx.fillStyle = "white";
+
+    for (let s of stars) {
+        ctx.fillRect(s.x, s.y, s.size, s.size);
+    }
+
+    // Score and lives
+    ctx.fillStyle = "#ffe632";
+    ctx.font = "bold 20px Arial";
+    ctx.fillText("SCORE: " + score, 12, 28);
+
+    ctx.fillStyle = "#50ff64";
+    ctx.fillText("LIVES: " + player.lives, 12, 54);
+
+    ctx.fillStyle = "white";
+    ctx.font = "15px Arial";
+    ctx.fillText("ENEMIES: " + destroyed + "/20", 12, 77);
+
+    // Player ship
+    ctx.fillStyle = "#32b4ff";
+    ctx.beginPath();
+    ctx.moveTo(player.x + player.w / 2, player.y);
+    ctx.lineTo(player.x, player.y + player.h);
+    ctx.lineTo(player.x + player.w / 2, player.y + player.h - 12);
+    ctx.lineTo(player.x + player.w, player.y + player.h);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#ffe632";
+    ctx.fillRect(player.x + 18, player.y + 20, 12, 18);
+
+    // Big yellow player bullets
+    ctx.fillStyle = "#ffe632";
+
+    for (let b of bullets) {
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
+
+    // Enemies
+    for (let e of enemies) {
+        ctx.fillStyle = "#ff3838";
+        ctx.beginPath();
+        ctx.ellipse(
+            e.x + e.w / 2,
+            e.y + e.h / 2,
+            e.w / 2,
+            e.h / 2,
+            0, 0, Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.fillStyle = "white";
+        ctx.fillRect(e.x + e.w * .25, e.y + e.h * .3, 9, 9);
+        ctx.fillRect(e.x + e.w * .65, e.y + e.h * .3, 9, 9);
+    }
+
+    // Boss
+    if (boss) {
+        ctx.fillStyle = "#b43cff";
+        ctx.beginPath();
+        ctx.ellipse(
+            boss.x + boss.w / 2,
+            boss.y + boss.h / 2,
+            boss.w / 2,
+            boss.h / 2,
+            0, 0, Math.PI * 2
+        );
+        ctx.fill();
+
+        ctx.fillStyle = "#ffe632";
+        ctx.beginPath();
+        ctx.arc(boss.x + 55, boss.y + 45, 13, 0, Math.PI * 2);
+        ctx.arc(boss.x + 125, boss.y + 45, 13, 0, Math.PI * 2);
+        ctx.fill();
+
+        let barW = Math.min(W - 40, 300);
+        let barX = (W - barW) / 2;
+
+        ctx.fillStyle = "#555";
+        ctx.fillRect(barX, 100, barW, 18);
+
+        ctx.fillStyle = "#32ff64";
+        ctx.fillRect(barX, 100, barW * boss.hp / 200, 18);
+
+        ctx.strokeStyle = "white";
+        ctx.strokeRect(barX, 100, barW, 18);
+
+        ctx.fillStyle = "white";
+        ctx.font = "16px Arial";
+        ctx.fillText("BOSS HP: " + boss.hp, barX, 92);
+    }
+
+    // Red enemy bullets
+    ctx.fillStyle = "#ff3838";
+
+    for (let b of enemyBullets) {
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function loop(time) {
+    let dt = Math.min((time - lastTime) / 1000 || 0, 0.05);
+    lastTime = time;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(loop);
+}
+
+// Hold buttons for movement and shooting
+function bindButton(id, key) {
+    const button = document.getElementById(id);
+
+    button.addEventListener("pointerdown", e => {
+        e.preventDefault();
+        keys[key] = true;
+        button.setPointerCapture(e.pointerId);
+    });
+
+    function release(e) {
+        e.preventDefault();
+        keys[key] = false;
+    }
+
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("lostpointercapture", () => {
+        keys[key] = false;
+    });
+}
+
+bindButton("left", "left");
+bindButton("right", "right");
+bindButton("shoot", "shoot");
+
+document.getElementById("restart").addEventListener("click", resetGame);
+
+window.addEventListener("resize", () => {
+    resize();
+    makeStars();
+});
+
+resize();
+makeStars();
+resetGame();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
